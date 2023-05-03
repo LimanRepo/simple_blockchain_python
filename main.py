@@ -1,6 +1,6 @@
 import threading
 
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request
 
 from p2p import (announce_new_block, populate_node, register_in_network,
                  start_server)
@@ -54,7 +54,9 @@ def get_nodes():
 @app.route("/register", methods=["POST"])
 def register():
     """Registers node in network"""
-    node_http_address = request.get_json()["node_http_address"]
+    node_http_address = request.get_json().get("node_http_address")
+    if not node_http_address:
+        abort(400, "Incorrect parameter: node_http_address")
     register_in_network(node_http_address)
     return "Node was added to network"
 

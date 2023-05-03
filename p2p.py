@@ -4,6 +4,7 @@ import socket
 import threading
 
 import requests
+from flask import abort
 
 from classes import Blockchain
 
@@ -34,6 +35,8 @@ def register_in_network(node_http_address):
     headers = {"Content-Type": "application/json"}
     data = json.dumps({"host": host, "port": port})
     response = requests.post(url, data=data, headers=headers)
+    if response.status_code != 200:
+        abort(400, "Something went wrong during registration")
 
     global nodes
     nodes, blockchain_data = json.loads(response.content)
@@ -59,11 +62,14 @@ def populate_node(new_node_host, new_node_port):
     serialized_node = pickle.dumps(
         json.dumps({"host": new_node_host, "port": new_node_port})
     )
+    msg = ADD_NODE_PREFIX + serialized_node
     for node in nodes:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((node["host"], node["port"]))
-            msg = ADD_NODE_PREFIX + serialized_node
-            s.sendall(msg)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((node["host"], node["port"]))
+                s.sendall(msg)
+        except socket.error as e:
+            print(f"Error while populating new node to node {node}: {e}")
 
     current_nodes = nodes.copy()
     current_nodes.append({"host": host, "port": port})
@@ -85,11 +91,14 @@ def announce_new_block(block):
         None
     """
     serialized_block_data = pickle.dumps(json.dumps(block.__dict__, sort_keys=True))
+    msg = ADD_BLOCK_PREFIX + serialized_block_data
     for node in nodes:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((node["host"], node["port"]))
-            msg = ADD_BLOCK_PREFIX + serialized_block_data
-            s.sendall(msg)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((node["host"], node["port"]))
+                s.sendall(msg)
+        except socket.error as e:
+            print(f"Error while announcing block to node {node}: {e}")
 
 
 def connection_handler(conn):
@@ -104,18 +113,26 @@ def connection_handler(conn):
     Returns:
     None
     """
-    data = conn.recv(1024)
-    prefix = data[:1]
-    body = data[1:]
+    try:
+        data = conn.recv(1024)
+        if not data:
+            raise ValueError("Empty data received from connection.")
+        prefix = data[:1]
+        body = data[1:]
 
-    if prefix == ADD_NODE_PREFIX:
-        new_node = json.loads(pickle.loads(body))
-        nodes.append({"host": new_node["host"], "port": new_node["port"]})
-    elif prefix == ADD_BLOCK_PREFIX:
-        block_data = json.loads(pickle.loads(body))
-        blockchain.verify_and_add_block(block_data)
+        if prefix == ADD_NODE_PREFIX:
+            new_node = json.loads(pickle.loads(body))
+            nodes.append({"host": new_node["host"], "port": new_node["port"]})
+        elif prefix == ADD_BLOCK_PREFIX:
+            block_data = json.loads(pickle.loads(body))
+            blockchain.verify_and_add_block(block_data)
+        else:
+            raise ValueError("Invalid prefix.")
 
-    conn.close()
+    except ValueError as e:
+        print(f"Error while handling socket connection: {e}")
+    finally:
+        conn.close()
 
 
 def start_server():
